@@ -8,18 +8,18 @@ module.exports = async (req, res) => {
     if (req.method === 'OPTIONS') return res.status(200).end();
 
     const { q, endpoint, category, genre, page } = req.query;
-    const BASE_URL = 'https://otakudesu.best'; 
+    const BASE_URL = 'https://animetop-id.com'; 
     const headers = { 
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-        'Referer': 'https://otakudesu.best/'
+        'Referer': 'https://animetop-id.com/'
     };
 
     try {
         let url = `${BASE_URL}/`;
 
-        // 1. JALUR STREAMING (EPISODE)
-        if (endpoint && (endpoint.includes('episode') || endpoint.includes('eps'))) {
-            url = `${BASE_URL}/episode/${endpoint.replace(/^\/|episode\//, '')}/`;
+        // 1. JALUR STREAMING (NONTON)
+        if (endpoint && endpoint.includes('episode')) {
+            url = `${BASE_URL}/${endpoint.replace(/^\//, '')}/`;
             const { data } = await axios.get(url, { headers, timeout: 8000 });
             const $ = cheerio.load(data);
             
@@ -27,70 +27,62 @@ module.exports = async (req, res) => {
                 status: 'success',
                 type: 'streaming',
                 data: {
-                    title: $('.venutama h1').text().trim(),
-                    // Ambil player pertama (biasanya HD/360p tergantung server)
-                    player: $('.responsive-embed-stream iframe').attr('src') || $('#pembed iframe').attr('src') || '',
+                    title: $('.entry-title').text().trim(),
+                    player: $('.player-embed iframe').attr('src') || $('.video-content iframe').attr('src') || '',
                 }
             });
         }
 
-        // 2. JALUR DETAIL ANIME (LIST SEMUA EPISODE)
+        // 2. JALUR DETAIL ANIME (LIST EPISODE)
         if (endpoint) {
             url = `${BASE_URL}/anime/${endpoint.replace(/^\/|anime\//, '')}/`;
             const { data } = await axios.get(url, { headers, timeout: 8000 });
             const $ = cheerio.load(data);
             
             const episodes = [];
-            $('.episodelist ul li').each((i, el) => {
+            $('.eplister ul li').each((i, el) => {
                 const a = $(el).find('a');
-                const href = a.attr('href') || '';
-                if (href.includes('/episode/')) {
-                    episodes.push({
-                        title: a.text().trim(),
-                        endpoint: href.split('/episode/')[1]?.replace(/\//g, '')
-                    });
-                }
+                episodes.push({
+                    title: $(el).find('.epl-num').text() + ' - ' + $(el).find('.epl-title').text(),
+                    endpoint: a.attr('href').replace(BASE_URL, '').replace(/\//g, '')
+                });
             });
 
             return res.status(200).json({
                 status: 'success',
                 type: 'anime_detail',
                 data: {
-                    title: $('.jdlinfo h1').text().trim(),
-                    thumbnail: $('.fotoanime img').attr('src'),
-                    sinopsis: $('.sinopc').text().trim(),
-                    genres: $('.infozin .infozingle').find('span:contains("Genre")').text().replace('Genre: ', '').trim(),
-                    episodes: episodes.reverse() // Urutin dari episode 1
+                    title: $('.entry-title').text().trim(),
+                    thumbnail: $('.thumb img').attr('src'),
+                    sinopsis: $('.entry-content p').text().trim(),
+                    genres: $('.genxed').text().trim(),
+                    episodes: episodes
                 }
             });
         }
 
-        // 3. JALUR LIST (ONGOING, COMPLETE, GENRE, SEARCH)
-        if (genre) url = `${BASE_URL}/genres/${genre}/`;
-        else if (category === 'ongoing') url = `${BASE_URL}/ongoing-anime/`;
-        else if (category === 'complete') url = `${BASE_URL}/complete-anime/`;
-        else if (q) url = `${BASE_URL}/?s=${encodeURIComponent(q)}&post_type=anime`;
+        // 3. JALUR LIST (ONGOING, SEARCH, GENRE)
+        if (q) url = `${BASE_URL}/?s=${encodeURIComponent(q)}`;
+        else if (genre) url = `${BASE_URL}/genres/${genre}/`;
+        else if (category === 'ongoing') url = `${BASE_URL}/anime/?status=ongoing&order=update`;
+        else if (category === 'completed') url = `${BASE_URL}/anime/?status=completed&order=update`;
+        else url = `${BASE_URL}/anime/?order=update`;
 
-        const p = parseInt(page) || 1;
-        if (p > 1) url += category || genre ? `page/${p}/` : `&page=${p}`;
+        if (page && page > 1) url += (url.includes('?') ? '&' : '?') + `page=${page}`;
 
         const { data } = await axios.get(url, { headers, timeout: 8000 });
         const $ = cheerio.load(data);
         const results = [];
 
-        $('.venz ul li').each((i, el) => {
-            const a = $(el).find('a').first();
-            const href = a.attr('href') || '';
-            const ep = href.split('/anime/')[1]?.replace(/\//g, '') || href.split('/episode/')[1]?.replace(/\//g, '');
-            
-            if (ep) {
-                results.push({
-                    title: $(el).find('h2').text().trim(),
-                    endpoint: ep,
-                    thumbnail: $(el).find('img').attr('src'),
-                    meta: $(el).find('.epz').text().trim() || $(el).find('.newnime').text().trim()
-                });
-            }
+        $('.listupd .bs').each((i, el) => {
+            const a = $(el).find('a');
+            results.push({
+                title: a.attr('title') || $(el).find('.tt').text().trim(),
+                endpoint: a.attr('href').replace(BASE_URL, '').replace(/\//g, '').replace('anime', ''),
+                thumbnail: $(el).find('img').attr('src'),
+                status: $(el).find('.epx').text().trim(),
+                type: $(el).find('.typez').text().trim()
+            });
         });
 
         return res.status(200).json({ status: 'success', total: results.length, data: results });
@@ -98,8 +90,9 @@ module.exports = async (req, res) => {
     } catch (err) {
         return res.status(200).json({ 
             status: 'error', 
-            message: "Otakudesu lagi sensi babi!", 
-            log: err.message 
+            message: "Animetop lagi tidur babi!", 
+            log: err.message,
+            tried: url
         });
     }
 };
