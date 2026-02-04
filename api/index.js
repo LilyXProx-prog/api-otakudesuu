@@ -8,7 +8,7 @@ module.exports = async (req, res) => {
     if (req.method === 'OPTIONS') return res.status(200).end();
 
     const { q, endpoint, category, genre, page } = req.query;
-    const BASE_URL = 'https://anoboy.si'; // Gak pake garis miring di ujung
+    const BASE_URL = 'https://anoboy.si';
     const headers = { 
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
         'Referer': 'https://anoboy.si/' 
@@ -17,12 +17,36 @@ module.exports = async (req, res) => {
     try {
         let targetUrl = `${BASE_URL}/`;
 
-        // 1. DETAIL JALUR
+        // 1. DETAIL JALUR (EPISODE/SERIES)
         if (endpoint) {
             targetUrl = `${BASE_URL}/${endpoint.replace(/^\//, '')}/`;
-            const { data } = await axios.get(targetUrl, { headers });
-            const $ = cheerio.load(data);
-            
+        } 
+        // 2. NAVIGASI JALUR (MAPPING TERBARU - ANTI 404)
+        else if (genre) {
+            targetUrl = `${BASE_URL}/genre/${genre}/`;
+        } else if (category) {
+            // Kita coba tanpa prefix 'category/' karena sering bikin 404
+            const catMap = { 
+                'ongoing': 'anime-ongoing', // Anoboy sering ganti jadi ini
+                'tamat': 'anime-tamat', 
+                'movie': 'movie-anime', 
+                'live-action': 'live-action' 
+            };
+            targetUrl = `${BASE_URL}/${catMap[category] || category}/`;
+        } else if (q) {
+            targetUrl = `${BASE_URL}/?s=${encodeURIComponent(q)}`;
+        }
+
+        // Pagination
+        if (page && page > 1) {
+            targetUrl += (targetUrl.includes('?') ? '&' : '') + `paged=${page}`;
+        }
+
+        const { data } = await axios.get(targetUrl, { headers });
+        const $ = cheerio.load(data);
+
+        // KONDISI A: KALO INI HALAMAN DETAIL (Ada Player)
+        if (endpoint) {
             const episodes = [];
             $('.host-link a, .video-nav a, .list-eps a').each((i, el) => {
                 const link = $(el).attr('href');
@@ -49,37 +73,15 @@ module.exports = async (req, res) => {
                 data: {
                     title: $('.entry-title').text().trim(),
                     player: $('iframe').first().attr('src'),
-                    sinopsis: $('.contentp').text().trim(),
+                    sinopsis: $('.contentp').text().trim() || $('.entry-content p').text().trim(),
                     full_episodes: episodes,
                     downloads
                 }
             });
         }
 
-        // 2. NAVIGASI JALUR (FIXED 404)
-        if (genre) {
-            targetUrl = `${BASE_URL}/genre/${genre}/`;
-        } else if (category) {
-            const catMap = { 
-                'ongoing': 'category/ongoing', 
-                'tamat': 'category/anime-tamat', 
-                'movie': 'category/movie-anime', 
-                'live-action': 'category/live-action' 
-            };
-            targetUrl = `${BASE_URL}/${catMap[category] || `category/${category}`}/`;
-        } else if (q) {
-            targetUrl = `${BASE_URL}/?s=${encodeURIComponent(q)}`;
-        }
-
-        // Pagination
-        if (page && page > 1) {
-            targetUrl += q ? `&paged=${page}` : `page/${page}/`;
-        }
-
-        const { data } = await axios.get(targetUrl, { headers });
-        const $ = cheerio.load(data);
+        // KONDISI B: KALO INI HALAMAN LIST (Home/Category/Search)
         const results = [];
-
         $('.amv, article, .item').each((i, el) => {
             const a = $(el).find('a').first();
             const link = a.attr('href');
@@ -96,10 +98,14 @@ module.exports = async (req, res) => {
         res.status(200).json({ status: 'success', total: results.length, data: results });
 
     } catch (err) {
+        // Kalo gagal 404 lagi, kita coba fallback ke URL category lama
+        if (err.response?.status === 404 && category && !targetUrl.includes('category/')) {
+            return res.redirect(`/api?category=category/${category}`);
+        }
         res.status(err.response?.status || 500).json({ 
             status: 'error', 
-            message: err.message, 
-            url: err.config?.url // Biar kita tau URL mana yang bikin 404
+            message: "Anoboy emang rewel, babi!", 
+            url: targetUrl 
         });
     }
 };
