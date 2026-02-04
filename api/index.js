@@ -2,6 +2,7 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 
 module.exports = async (req, res) => {
+    // KUNCI CORS BIAR FRONTEND LU GAK MATI
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -10,37 +11,44 @@ module.exports = async (req, res) => {
 
     const { q, endpoint, category, genre, page } = req.query;
     const BASE_URL = 'https://anoboy.si/';
-    const headers = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36' };
+    const headers = { 
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        'Referer': 'https://anoboy.si/' 
+    };
 
     try {
-        // 1. DETAIL LENGKAP (Sinopsis, Rating, Genre, Download)
+        // 1. JALUR DETAIL LENGKAP (Sinopsis + Download + Info)
         if (endpoint) {
-            const { data } = await axios.get(`${BASE_URL}${endpoint}/`, { headers });
+            const { data } = await axios.get(`${BASE_URL}${endpoint}/`, { headers, timeout: 15000 });
             const $ = cheerio.load(data);
             
-            // Metadata Scraper
-            const title = $('.entry-title').text().trim();
-            const sinopsis = $('.contentp').text().trim();
-            const thumbnail = $('.entry-content img').first().attr('src');
-            
-            // Ambil Info Detail (Rating, Status, dll)
+            // Selector sinopsis yang lebih galak (nyari di berbagai tempat)
+            const sinopsis = $('.contentp').text().trim() || 
+                             $('.entry-content p').first().text().trim() || 
+                             'Sinopsis belum tersedia untuk episode ini, babi.';
+
             const info = {};
-            $('.contentp p').each((i, el) => {
+            // Scrape metadata (Genre, Rating, Status)
+            $('.contentp p, .entry-content p').each((i, el) => {
                 const text = $(el).text();
                 if (text.includes(':')) {
-                    const [key, val] = text.split(':').map(s => s.trim());
-                    info[key.toLowerCase()] = val;
+                    const parts = text.split(':');
+                    const key = parts[0].trim().toLowerCase().replace(/\s/g, '_');
+                    const val = parts.slice(1).join(':').trim();
+                    if (key && val) info[key] = val;
                 }
             });
 
-            // Download Links (Teknik Brutal 2.0)
+            // Scrape Link Download (Brutal Mode)
             const downloads = [];
             $('a').each((i, el) => {
                 const url = $(el).attr('href');
                 const text = $(el).text().trim();
                 if (url && url.includes('http') && !url.includes('anoboy.si')) {
-                    if (/download|mirror|drive|mega|720p|480p|360p/.test(text.toLowerCase()) || /gdrive|mp4upload/.test(url)) {
-                        downloads.push({ server: text || `Link ${i}`, url });
+                    const isDownload = /download|mirror|drive|mega|zippyshare|720p|480p|360p/.test(text.toLowerCase()) || 
+                                     /gdrive|mp4upload|odrive/.test(url.toLowerCase());
+                    if (isDownload) {
+                        downloads.push({ server: text || `Server ${i}`, url: url });
                     }
                 }
             });
@@ -48,11 +56,17 @@ module.exports = async (req, res) => {
             return res.status(200).json({
                 status: 'success',
                 type: 'detail',
-                data: { title, sinopsis, thumbnail, info, downloads }
+                data: {
+                    title: $('.entry-title').text().trim(),
+                    sinopsis,
+                    thumbnail: $('.entry-content img').first().attr('src'),
+                    info,
+                    downloads
+                }
             });
         }
 
-        // 2. NAVIGASI DATABASE (Category, Genre, Search)
+        // 2. JALUR LIST DATABASE (Home, Genre, Category, Search)
         let targetUrl = BASE_URL;
         if (genre) targetUrl = `${BASE_URL}genre/${genre}/`;
         else if (category) targetUrl = `${BASE_URL}category/${category}/`;
@@ -70,11 +84,14 @@ module.exports = async (req, res) => {
             const title = $(el).find('a').attr('title') || $(el).find('h3').text().trim();
             const link = $(el).find('a').attr('href');
             const thumb = $(el).find('img').attr('src');
-            const epInfo = $(el).find('.jam, .ep').text().trim(); // Episode berapa atau jam berapa rilis
+            const meta = $(el).find('.jam, .ep').text().trim();
 
             if (link) {
                 const ep = link.replace(BASE_URL, '').replace(/\//g, '');
-                results.push({ title, endpoint: ep, thumbnail: thumb, meta: epInfo });
+                // Filter biar gak masukin endpoint sampah
+                if (title && ep && !ep.startsWith('category') && !ep.startsWith('author')) {
+                    results.push({ title, endpoint: ep, thumbnail: thumb, meta });
+                }
             }
         });
 
