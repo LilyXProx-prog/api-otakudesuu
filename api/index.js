@@ -8,39 +8,37 @@ module.exports = async (req, res) => {
     if (req.method === 'OPTIONS') return res.status(200).end();
 
     const { q, endpoint, category, genre, page } = req.query;
-    const BASE_URL = 'https://anoboy.si/';
+    const BASE_URL = 'https://anoboy.si'; // Gak pake garis miring di ujung
     const headers = { 
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
         'Referer': 'https://anoboy.si/' 
     };
 
     try {
-        // 1. DETAIL LENGKAP (PLAYER + FULL EPISODES + INFO)
+        let targetUrl = `${BASE_URL}/`;
+
+        // 1. DETAIL JALUR
         if (endpoint) {
-            const { data } = await axios.get(`${BASE_URL}${endpoint}/`, { headers });
+            targetUrl = `${BASE_URL}/${endpoint.replace(/^\//, '')}/`;
+            const { data } = await axios.get(targetUrl, { headers });
             const $ = cheerio.load(data);
             
-            // Scrape List Episode Lengkap (dari tabel atau link terkait)
-            const episodeList = [];
-            // Kita cari link yang judulnya mirip atau ada di dalam navigasi episode
-            $('.host-link a, .video-nav a, .list-eps a, .entry-content a[href*="episode"]').each((i, el) => {
-                const title = $(el).text().trim();
+            const episodes = [];
+            $('.host-link a, .video-nav a, .list-eps a').each((i, el) => {
                 const link = $(el).attr('href');
-                if (link && link.includes('anoboy.si') && !link.includes('category')) {
-                    const epEndpoint = link.replace(BASE_URL, '').replace(/\//g, '');
-                    if (epEndpoint !== endpoint) {
-                        episodeList.push({ title, endpoint: epEndpoint });
-                    }
+                if (link && link.includes('anoboy.si')) {
+                    episodes.push({ 
+                        title: $(el).text().trim(), 
+                        endpoint: link.replace(BASE_URL, '').replace(/\//g, '') 
+                    });
                 }
             });
 
-            // Scrape Download
             const downloads = [];
             $('a').each((i, el) => {
                 const url = $(el).attr('href');
-                const text = $(el).text().trim().toLowerCase();
                 if (url && url.includes('http') && !url.includes('anoboy.si')) {
-                    if (/download|mirror|drive|mega|720p|480p|360p/.test(text) || /gdrive|mp4upload/.test(url)) {
+                    if (/download|mirror|drive|mega|720p|480p|360p/.test($(el).text().toLowerCase())) {
                         downloads.push({ server: $(el).text().trim(), url });
                     }
                 }
@@ -48,26 +46,35 @@ module.exports = async (req, res) => {
 
             return res.status(200).json({
                 status: 'success',
-                type: 'detail',
                 data: {
                     title: $('.entry-title').text().trim(),
                     player: $('iframe').first().attr('src'),
-                    sinopsis: $('.contentp').text().trim() || $('.entry-content p').first().text().trim(),
-                    full_episodes: episodeList, // INI DIA LIST DARI 1 SAMPE AKHIR, BABI!
+                    sinopsis: $('.contentp').text().trim(),
+                    full_episodes: episodes,
                     downloads
                 }
             });
         }
 
-        // 2. NAVIGASI DATABASE (HOME, CATEGORY, GENRE, SEARCH)
-        let targetUrl = BASE_URL;
-        if (genre) targetUrl = `${BASE_URL}genre/${genre}/`;
-        else if (category) {
-            const catMap = { 'ongoing': 'category/ongoing', 'tamat': 'category/anime-tamat', 'movie': 'category/movie-anime', 'live-action': 'category/live-action' };
-            targetUrl = `${BASE_URL}${catMap[category] || category}/`;
-        } else if (q) targetUrl = `${BASE_URL}?s=${encodeURIComponent(q)}`;
+        // 2. NAVIGASI JALUR (FIXED 404)
+        if (genre) {
+            targetUrl = `${BASE_URL}/genre/${genre}/`;
+        } else if (category) {
+            const catMap = { 
+                'ongoing': 'category/ongoing', 
+                'tamat': 'category/anime-tamat', 
+                'movie': 'category/movie-anime', 
+                'live-action': 'category/live-action' 
+            };
+            targetUrl = `${BASE_URL}/${catMap[category] || `category/${category}`}/`;
+        } else if (q) {
+            targetUrl = `${BASE_URL}/?s=${encodeURIComponent(q)}`;
+        }
 
-        if (page && page > 1) targetUrl += (q ? `&paged=${page}` : `page/${page}/`);
+        // Pagination
+        if (page && page > 1) {
+            targetUrl += q ? `&paged=${page}` : `page/${page}/`;
+        }
 
         const { data } = await axios.get(targetUrl, { headers });
         const $ = cheerio.load(data);
@@ -86,7 +93,13 @@ module.exports = async (req, res) => {
             }
         });
 
-        res.status(200).json({ status: 'success', total: results.length, filter: { category, genre, page }, data: results });
+        res.status(200).json({ status: 'success', total: results.length, data: results });
 
-    } catch (err) { res.status(500).json({ status: 'error', message: err.message }); }
+    } catch (err) {
+        res.status(err.response?.status || 500).json({ 
+            status: 'error', 
+            message: err.message, 
+            url: err.config?.url // Biar kita tau URL mana yang bikin 404
+        });
+    }
 };
