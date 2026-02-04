@@ -7,7 +7,7 @@ module.exports = async (req, res) => {
     const BASE_URL = 'https://otakudesu.best/';
 
     try {
-        // FITUR 1: AMBIL DETAIL DOWNLOAD (Kalau ada parameter endpoint)
+        // FITUR BARU: Kalau lu masukin ?endpoint=judul-anime, dia bakal cari link download
         if (endpoint) {
             const { data } = await axios.get(`${BASE_URL}episode/${endpoint}/`, { headers });
             const $ = cheerio.load(data);
@@ -25,7 +25,7 @@ module.exports = async (req, res) => {
             return res.status(200).json({ status: 'success', endpoint, download_links: downloadLinks });
         }
 
-        // FITUR 2: HOME & SEARCH (Default)
+        // FITUR LAMA: Home & Search
         let url = BASE_URL;
         if (q) url += `?s=${encodeURIComponent(q)}&post_type=anime`;
 
@@ -43,6 +43,6 @@ module.exports = async (req, res) => {
 
         res.status(200).json({ status: 'success', total: results.length, data: results });
     } catch (err) {
-        res.status(500).json({ status: 'error', message: err.message });
+        res.status(500).json({ status: 'error', message: "Gagal narik data, babi!", detail: err.message });
     }
 };
