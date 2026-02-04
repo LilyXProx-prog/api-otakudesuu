@@ -1,43 +1,29 @@
-app.get('/api/search', async (req, res) => {
-    const query = req.query.q;
-    if (!query) return res.status(400).json({ message: 'Mana keyword-nya, babi?' });
-    
+const axios = require('axios');
+const cheerio = require('cheerio');
+
+module.exports = async (req, res) => {
+    const { q } = req.query;
+    const headers = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36' };
+
     try {
-        // Otakudesu pake pencarian via query string 's'
-        const searchUrl = `${BASE_URL}?s=${encodeURIComponent(query)}&post_type=anime`;
-        const { data } = await axios.get(searchUrl, { headers });
+        let url = 'https://otakudesu.best/';
+        if (q) url += `?s=${encodeURIComponent(q)}&post_type=anime`;
+
+        const { data } = await axios.get(url, { headers, timeout: 8000 });
         const $ = cheerio.load(data);
         const results = [];
 
-        // Update selector: Otakudesu biasanya pake .chivsrc atau .venz buat search
-        $('.chivsrc li').each((i, el) => {
-            const title = $(el).find('h2 a').text().trim();
-            const endpoint = $(el).find('h2 a').attr('href')?.replace(BASE_URL, '');
-            const thumb = $(el).find('img').attr('src');
-            const status = $(el).find('.set').first().text().trim();
-
-            if (title) {
-                results.push({ title, status, endpoint, thumb });
-            }
+        // Logika gabungan: Home & Search
+        const selector = q ? '.chivsrc li' : '.venz ul li';
+        
+        $(selector).each((i, el) => {
+            const title = $(el).find('h2').text().trim();
+            const endpoint = $(el).find('a').attr('href')?.split('/').filter(Boolean).pop();
+            if (title) results.push({ title, endpoint });
         });
 
-        // Kalau masih kosong, coba selector cadangan
-        if (results.length === 0) {
-            $('.venz ul li').each((i, el) => {
-                const title = $(el).find('h2').text().trim();
-                const endpoint = $(el).find('a').attr('href')?.replace(BASE_URL, '');
-                results.push({ title, endpoint });
-            });
-        }
-
-        res.status(200).json({ 
-            status: 'success', 
-            query, 
-            total_results: results.length,
-            data: results 
-        });
-
+        res.status(200).json({ status: 'success', total: results.length, data: results });
     } catch (err) {
-        res.status(500).json({ status: 'fail', message: err.message });
+        res.status(500).json({ status: 'error', message: err.message });
     }
-});
+};
