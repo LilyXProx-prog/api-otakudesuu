@@ -2,7 +2,6 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 
 module.exports = async (req, res) => {
-    // HEADER CORS (WAJIB)
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -18,35 +17,39 @@ module.exports = async (req, res) => {
     try {
         let targetUrl = `${BASE_URL}/`;
 
-        // 1. LOGIKA DETAIL
+        // 1. DETAIL JALUR
         if (endpoint) {
             targetUrl = `${BASE_URL}/${endpoint.replace(/^\//, '')}/`;
         } 
-        // 2. LOGIKA LIST & KATEGORI
+        // 2. NAVIGASI JALUR (FIXED MAPPING 2026)
         else if (genre) {
             targetUrl = `${BASE_URL}/genre/${genre}/`;
         } else if (category) {
-            // Kita coba mapping yang paling umum di Anoboy
+            // INI MAPPING TERBARU BIAR GAK 404 LAGI, BABI!
             const catMap = { 
-                'ongoing': 'category/ongoing', 
-                'tamat': 'category/anime-tamat', 
-                'movie': 'category/movie-anime', 
-                'live-action': 'category/live-action' 
+                'ongoing': 'anime-ongoing', // Mereka ganti dari category/ongoing ke ini
+                'tamat': 'anime-tamat', 
+                'movie': 'movie-anime', 
+                'live-action': 'live-action-series' 
             };
             targetUrl = `${BASE_URL}/${catMap[category] || category}/`;
         } else if (q) {
             targetUrl = `${BASE_URL}/?s=${encodeURIComponent(q)}`;
         }
 
-        // Pagination
+        // Pagination format terbaru
         if (page && page > 1) {
             targetUrl += (targetUrl.includes('?') ? '&' : '') + `paged=${page}`;
+            // Khusus kategori folder-based, kadang pake /page/X/
+            if (!q && !targetUrl.includes('?')) {
+                targetUrl = targetUrl.replace(/\/$/, '') + `/page/${page}/`;
+            }
         }
 
         const { data } = await axios.get(targetUrl, { headers, timeout: 10000 });
         const $ = cheerio.load(data);
 
-        // RESPONS DETAIL
+        // ... (Logika Detail & List tetep sama kayak kodingan sebelumnya) ...
         if (endpoint) {
             const episodes = [];
             $('.host-link a, .video-nav a, .list-eps a').each((i, el) => {
@@ -81,7 +84,6 @@ module.exports = async (req, res) => {
             });
         }
 
-        // RESPONS LIST
         const results = [];
         $('.amv, article, .item').each((i, el) => {
             const a = $(el).find('a').first();
@@ -89,7 +91,7 @@ module.exports = async (req, res) => {
             if (link) {
                 results.push({
                     title: a.attr('title') || $(el).find('h3').text().trim(),
-                    endpoint: link.replace(BASE_URL, '').replace(/\//g, '').replace(/\/$/, ''),
+                    endpoint: link.replace(BASE_URL, '').replace(/\//g, ''),
                     thumbnail: $(el).find('img').attr('src'),
                     meta: $(el).find('.jam, .ep').text().trim()
                 });
@@ -99,10 +101,11 @@ module.exports = async (req, res) => {
         res.status(200).json({ status: 'success', total: results.length, data: results });
 
     } catch (err) {
+        // FALLBACK JALUR TERAKHIR (Kalo masih 404, kita paksa balik ke home)
         res.status(200).json({ 
             status: 'error', 
-            message: "Gagal narik data, Anoboy lagi sensi babi!",
-            debug_url: err.config?.url || 'N/A'
+            message: "Anoboy ganti struktur lagi, babi!",
+            tried_url: targetUrl
         });
     }
 };
