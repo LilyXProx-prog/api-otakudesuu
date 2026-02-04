@@ -2,6 +2,21 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 
 module.exports = async (req, res) => {
+    // KUNCI BIAR GAK GAGAL NARIK DATA (CORS FIX)
+    res.setHeader('Access-Control-Allow-Credentials', true);
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+    res.setHeader(
+        'Access-Control-Allow-Headers',
+        'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version'
+    );
+
+    // Tangani preflight request
+    if (req.method === 'OPTIONS') {
+        res.status(200).end();
+        return;
+    }
+
     const { q, endpoint } = req.query;
     const BASE_URL = 'https://anoboy.si/';
     const headers = {
@@ -10,19 +25,19 @@ module.exports = async (req, res) => {
     };
 
     try {
+        // 1. JALUR DETAIL EPISODE / DOWNLOAD
         if (endpoint) {
             const targetUrl = `${BASE_URL}${endpoint}/`;
             const { data } = await axios.get(targetUrl, { headers, timeout: 15000 });
             const $ = cheerio.load(data);
             const downloadLinks = [];
 
-            // TEKNIK BRUTAL: Sikat semua tag <a> di seluruh halaman
+            // TEKNIK BRUTAL: Sikat semua tag <a>
             $('a').each((i, el) => {
                 const url = $(el).attr('href');
                 const text = $(el).text().trim().toLowerCase();
                 
                 if (url && (url.includes('http')) && !url.includes('anoboy.si')) {
-                    // Filter: Cari kata kunci download atau nama server populer
                     const isDownload = /download|mirror|drive|mega|zippyshare|mediafire|720p|480p|360p/.test(text) || 
                                      /gdrive|mp4upload|odrive/.test(url.toLowerCase());
                     
@@ -38,12 +53,11 @@ module.exports = async (req, res) => {
             if (downloadLinks.length > 0) {
                 return res.status(200).json({ status: 'success', type: 'download_links', endpoint, data: downloadLinks });
             } else {
-                // Kalo masih gagal, balikin HTML mentahnya (buat kita debug manual, babi!)
-                return res.status(200).json({ status: 'fail', message: 'Masih zonk, babi! Cek manual!', url: targetUrl });
+                return res.status(200).json({ status: 'fail', message: 'Gak nemu link download, babi!', url: targetUrl });
             }
         }
 
-        // Jalur List Episode (Udah Berhasil)
+        // 2. JALUR LIST EPISODE / SEARCH
         let targetUrl = q ? `${BASE_URL}?s=${encodeURIComponent(q)}` : BASE_URL;
         const { data } = await axios.get(targetUrl, { headers });
         const $ = cheerio.load(data);
@@ -52,10 +66,12 @@ module.exports = async (req, res) => {
         $('.home-list .amv, .column-content .amv, article').each((i, el) => {
             const title = $(el).find('a').attr('title') || $(el).find('h3').text().trim();
             const link = $(el).find('a').attr('href');
+            const thumb = $(el).find('img').attr('src'); // Tambahin thumbnail biar web lu cakep
+
             if (link) {
                 const ep = link.replace(BASE_URL, '').replace(/\//g, '');
                 if (title && ep && !ep.startsWith('series')) {
-                    results.push({ title, endpoint: ep });
+                    results.push({ title, endpoint: ep, thumbnail: thumb });
                 }
             }
         });
