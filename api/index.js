@@ -5,81 +5,83 @@ module.exports = async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
     if (req.method === 'OPTIONS') return res.status(200).end();
 
-    const { q, endpoint, category, genre, page } = req.query;
+    const { q, endpoint, category, page } = req.query;
     const BASE_URL = 'https://anoboy.si/';
-    const headers = { 
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-        'Referer': 'https://anoboy.si/',
-        'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7'
-    };
+    const headers = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36', 'Referer': 'https://anoboy.si/' };
 
     try {
         if (endpoint) {
-            const { data } = await axios.get(`${BASE_URL}${endpoint}/`, { headers, timeout: 15000 });
+            const { data } = await axios.get(`${BASE_URL}${endpoint}/`, { headers });
             const $ = cheerio.load(data);
             
-            // 1. CARI VIDEO PLAYER (EMBED)
-            const embedUrl = $('iframe').first().attr('src') || 
-                             $('video source').attr('src') || 
-                             $('#video_embed iframe').attr('src');
-
-            // 2. CARI SINOPSIS (SELECTOR CADANGAN)
-            const sinopsis = $('.contentp').text().trim() || 
-                             $('.entry-content p').text().trim() || 
-                             $('#informasi').next().text().trim() ||
-                             'Sinopsis lagi dicari, babi!';
+            // Scrape List Episode (1, 2, 3...) yang ada di halaman nonton
+            const allEpisodes = [];
+            $('.host-link a, .video-nav a, .list-eps a').each((i, el) => {
+                const title = $(el).text().trim();
+                const link = $(el).attr('href');
+                if (link && link.includes('anoboy.si')) {
+                    allEpisodes.push({ 
+                        episode: title, 
+                        endpoint: link.replace(BASE_URL, '').replace(/\//g, '') 
+                    });
+                }
+            });
 
             const downloads = [];
             $('a').each((i, el) => {
                 const url = $(el).attr('href');
                 const text = $(el).text().trim().toLowerCase();
-                if (url && (url.includes('http')) && !url.includes('anoboy.si')) {
+                if (url && url.includes('http') && !url.includes('anoboy.si')) {
                     if (/download|mirror|drive|mega|720p|480p|360p/.test(text) || /gdrive|mp4upload/.test(url)) {
-                        downloads.push({ server: $(el).text().trim() || `Server ${i}`, url });
+                        downloads.push({ server: $(el).text().trim() || `Link ${i}`, url });
                     }
                 }
             });
 
             return res.status(200).json({
                 status: 'success',
+                type: 'detail',
                 data: {
                     title: $('.entry-title').text().trim(),
-                    player: embedUrl,
-                    sinopsis,
+                    player: $('iframe').first().attr('src'),
+                    sinopsis: $('.contentp').text().trim() || 'Sinopsis belum tersedia.',
+                    episodes: allEpisodes, // INI LIST EPISODE LAINNYA, BABI!
                     downloads
                 }
             });
         }
 
-        // 3. JALUR LIST (SELECTOR BARU)
-        let targetUrl = q ? `${BASE_URL}?s=${encodeURIComponent(q)}` : (category ? `${BASE_URL}category/${category}/` : (genre ? `${BASE_URL}genre/${genre}/` : BASE_URL));
+        // Jalur List dengan Kategori yang Diperbaiki
+        let targetUrl = BASE_URL;
+        if (category) {
+            // Mapping kategori biar gak typo
+            const catMap = { 'ongoing': 'category/ongoing', 'tamat': 'category/anime-tamat', 'movie': 'category/movie-anime', 'live-action': 'category/live-action' };
+            targetUrl = `${BASE_URL}${catMap[category] || category}/`;
+        } else if (q) {
+            targetUrl = `${BASE_URL}?s=${encodeURIComponent(q)}`;
+        }
+
         if (page && page > 1) targetUrl += (q ? `&paged=${page}` : `page/${page}/`);
 
         const { data } = await axios.get(targetUrl, { headers });
         const $ = cheerio.load(data);
         const results = [];
 
-        // Selector list episode yang lebih luas
-        $('.amv, article, .item, .home-list li').each((i, el) => {
+        $('.amv, article, .item').each((i, el) => {
             const a = $(el).find('a').first();
             const title = a.attr('title') || $(el).find('h3').text().trim();
             const link = a.attr('href');
-            const thumb = $(el).find('img').attr('src');
-
             if (link && title) {
-                const ep = link.replace(BASE_URL, '').replace(/\//g, '');
-                if (!ep.startsWith('category') && !ep.startsWith('author')) {
-                    results.push({ title, endpoint: ep, thumbnail: thumb });
-                }
+                results.push({
+                    title,
+                    endpoint: link.replace(BASE_URL, '').replace(/\//g, ''),
+                    thumbnail: $(el).find('img').attr('src')
+                });
             }
         });
 
         res.status(200).json({ status: 'success', total: results.length, data: results });
-
-    } catch (err) {
-        res.status(500).json({ status: 'error', message: "Anoboy lagi galak, babi!", detail: err.message });
-    }
+    } catch (err) { res.status(500).json({ status: 'error', message: err.message }); }
 };
