@@ -12,43 +12,42 @@ module.exports = async (req, res) => {
     try {
         let targetUrl = q ? `${BASE_URL}?s=${encodeURIComponent(q)}` : (endpoint ? `${BASE_URL}${endpoint}/` : BASE_URL);
 
-        const { data } = await axios.get(targetUrl, { headers, timeout: 10000 });
+        const { data } = await axios.get(targetUrl, { headers, timeout: 15000 });
         const $ = cheerio.load(data);
         const results = [];
 
-        // PRIORITAS 1: AMBIL LINK DOWNLOAD/VIDEO (Khusus Halaman Nonton)
-        // Kita cari di div .v_links atau .download
-        if ($('.v_links, .download').length > 0) {
-            const videoData = [];
-            $('.v_links a, .download a').each((i, el) => {
-                const link = $(el).attr('href');
-                const server = $(el).text().trim();
-                if (link && !link.includes('javascript')) {
-                    videoData.push({ server, url: link });
+        // 1. CARI LINK DOWNLOAD (Target Utama)
+        // Kita coba sikat semua link yang ada di dalem div .v_links, .download, atau tabel
+        const downloadElement = $('.v_links, .download, #isi-video, .video-content');
+        if (downloadElement.length > 0) {
+            const videoLinks = [];
+            downloadElement.find('a').each((i, el) => {
+                const url = $(el).attr('href');
+                const text = $(el).text().trim();
+                // Filter biar gak nangkep link navigasi atau iklan
+                if (url && (url.includes('http') || url.includes('drive') || url.includes('mega'))) {
+                    videoLinks.push({ server: text || 'Download Link', url: url });
                 }
             });
-            // Kalo ketemu link download, langsung balikin hasilnya
-            if (videoData.length > 0) {
-                return res.status(200).json({ status: 'success', type: 'download_links', data: videoData });
+            
+            if (videoLinks.length > 0) {
+                return res.status(200).json({ status: 'success', type: 'download_links', data: videoLinks });
             }
         }
 
-        // PRIORITAS 2: DAFTAR ANIME (Search & Home)
-        const selector = '.home-list .amv, .column-content .amv, article';
-        $(selector).each((i, el) => {
-            const title = $(el).find('a').attr('title');
+        // 2. DAFTAR ANIME (Kalau bukan halaman nonton)
+        $('.home-list .amv, .column-content .amv, article').each((i, el) => {
+            const title = $(el).find('a').attr('title') || $(el).find('h3').text().trim();
             const link = $(el).find('a').attr('href');
-            const thumb = $(el).find('img').attr('src');
             const ep = link?.replace(BASE_URL, '').replace(/\//g, '');
-            
-            if (title && ep && !ep.startsWith('series')) { // Filter biar gak nangkep link series
-                results.push({ title, endpoint: ep, thumbnail: thumb });
+            if (title && ep && !ep.startsWith('series')) {
+                results.push({ title, endpoint: ep });
             }
         });
 
         res.status(200).json({ status: 'success', total: results.length, data: results });
 
     } catch (err) {
-        res.status(500).json({ status: 'error', message: "Gagal narik data Anoboy, babi!", detail: err.message });
+        res.status(500).json({ status: 'error', message: "Anoboy emang ribet, babi!", detail: err.message });
     }
 };
