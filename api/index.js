@@ -6,17 +6,14 @@ module.exports = async (req, res) => {
     const BASE_URL = 'https://anoboy.ninja/';
     const headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+        'Referer': 'https://anoboy.ninja/'
     };
 
     try {
         let targetUrl = BASE_URL;
-        
-        // Logika Search
         if (q) {
             targetUrl = `${BASE_URL}?s=${encodeURIComponent(q)}`;
-        } 
-        // Logika Detail Episode/Anime
-        else if (endpoint) {
+        } else if (endpoint) {
             targetUrl = `${BASE_URL}${endpoint}/`;
         }
 
@@ -24,25 +21,30 @@ module.exports = async (req, res) => {
         const $ = cheerio.load(data);
         const results = [];
 
-        // 1. Ambil Link Download/Video (Jika di halaman detail)
-        if ($('.download').length > 0 || $('#isi-video').length > 0) {
+        // 1. LOGIKA DETAIL VIDEO (Jika ada di halaman episode)
+        if ($('#isi-video').length > 0 || $('.v_links').length > 0) {
             const videoLinks = [];
-            $('#isi-video iframe').each((i, el) => {
-                videoLinks.push({ server: 'Embed Player', url: $(el).attr('src') });
+            // Ambil Embed
+            $('iframe').each((i, el) => {
+                const src = $(el).attr('src');
+                if (src) videoLinks.push({ type: 'embed', url: src });
             });
-            // Link Download manual biasanya ada di dalam .download
-            $('.download a').each((i, el) => {
+            // Ambil Link Download manual
+            $('.v_links a').each((i, el) => {
                 videoLinks.push({ server: $(el).text().trim(), url: $(el).attr('href') });
             });
-            return res.status(200).json({ status: 'success', type: 'video', data: videoLinks });
+            return res.status(200).json({ status: 'success', type: 'video_links', data: videoLinks });
         }
 
-        // 2. Daftar Anime (Home & Search)
-        $('.column-content a').each((i, el) => {
-            const title = $(el).attr('title');
-            const link = $(el).attr('href');
+        // 2. LOGIKA DAFTAR ANIME (Home & Search)
+        // Anoboy biasanya pake .home-list atau article
+        $('.column-content .amv, .home-list .amv, article').each((i, el) => {
+            const title = $(el).find('a').attr('title') || $(el).find('h3').text().trim();
+            const rawLink = $(el).find('a').attr('href');
             const thumb = $(el).find('img').attr('src');
-            const ep = link?.replace(BASE_URL, '').replace(/\//g, '');
+            
+            // Bersihin endpoint biar gak double slash
+            const ep = rawLink?.replace(BASE_URL, '').replace(/\//g, '');
             
             if (title && ep) {
                 results.push({ title, endpoint: ep, thumbnail: thumb });
@@ -54,7 +56,7 @@ module.exports = async (req, res) => {
     } catch (err) {
         res.status(err.response?.status || 500).json({ 
             status: 'error', 
-            message: "Gagal nembak Anoboy, babi!", 
+            message: "Anoboy nolak lagi, babi!", 
             detail: err.message 
         });
     }
