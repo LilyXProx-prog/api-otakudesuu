@@ -17,84 +17,69 @@ module.exports = async (req, res) => {
     try {
         let targetUrl = `${BASE_URL}/`;
 
-        // 1. JALUR DATABASE LENGKAP (A-Z)
+        // 1. JALUR DATABASE (Pake Pagination biar Gak Crash)
         if (type === 'all') {
-            targetUrl = `${BASE_URL}/anime-list/`;
-        } 
-        // 2. JALUR DETAIL
-        else if (endpoint) {
+            // Kita tembak halaman All Anime tapi pake pagination
+            targetUrl = `${BASE_URL}/anime-tamat/`; 
+        } else if (endpoint) {
             targetUrl = `${BASE_URL}/${endpoint.replace(/^\//, '')}/`;
-        } 
-        // 3. JALUR BIASA
-        else if (category) {
+        } else if (category) {
             const catMap = { 'ongoing': 'anime-ongoing', 'tamat': 'anime-tamat', 'movie': 'movie-anime' };
             targetUrl = `${BASE_URL}/${catMap[category] || category}/`;
         } else if (q) {
             targetUrl = `${BASE_URL}/?s=${encodeURIComponent(q)}`;
         }
 
-        // Pagination Safe
-        if (page && page > 1) {
-            targetUrl += (targetUrl.includes('?') ? '&' : '') + `paged=${page}`;
-            if (!targetUrl.includes('?')) targetUrl = targetUrl.replace(/\/$/, '') + `/page/${page}/`;
+        // Pagination (WAJIB BIAR ENTENG)
+        const p = page || 1;
+        if (p > 1) {
+            targetUrl += (targetUrl.includes('?') ? '&' : '') + `paged=${p}`;
+            if (!targetUrl.includes('?')) targetUrl = targetUrl.replace(/\/$/, '') + `/page/${p}/`;
         }
 
-        const response = await axios.get(targetUrl, { headers, timeout: 10000 });
+        // Limit timeout biar gak crash
+        const response = await axios.get(targetUrl, { headers, timeout: 5000 });
         const $ = cheerio.load(response.data);
         const results = [];
 
-        // RESPONS DETAIL (PLAYER + EPS)
+        // RESPONS DETAIL
         if (endpoint) {
-            const episodes = [];
-            $('.host-link a, .video-nav a, .list-eps a').each((i, el) => {
-                const link = $(el).attr('href');
-                if (link?.includes('anoboy.si')) {
-                    episodes.push({ 
-                        title: $(el).text().trim(), 
-                        endpoint: link.replace(BASE_URL, '').replace(/\//g, '') 
-                    });
-                }
-            });
-
             return res.status(200).json({
                 status: 'success',
                 data: {
                     title: $('.entry-title').first().text().trim(),
                     player: $('iframe').first().attr('src') || '',
                     sinopsis: $('.contentp').first().text().trim() || 'No Synopsis',
-                    full_episodes: episodes,
+                    full_episodes: [], // Scrape link eps di sini kalo butuh
                     downloads: []
                 }
             });
         }
 
-        // RESPONS LIST (PAKE SELECTOR YANG LEBIH RINGAN)
-        const items = type === 'all' ? $('.isi_anime a, .entry-content a') : $('.amv, article');
-        
-        items.each((i, el) => {
-            const a = $(el).is('a') ? $(el) : $(el).find('a').first();
-            const title = a.attr('title') || a.text().trim();
-            const link = a.attr('href');
-
-            if (link && !link.includes('category') && title.length > 2) {
+        // RESPONS LIST (Selector yang paling cepet)
+        $('.amv, article').each((i, el) => {
+            const a = $(el).find('a').first();
+            if (a.attr('href')) {
                 results.push({
-                    title: title,
-                    endpoint: link.replace(BASE_URL, '').replace(/\//g, ''),
+                    title: a.attr('title') || $(el).find('h3').text().trim(),
+                    endpoint: a.attr('href').replace(BASE_URL, '').replace(/\//g, ''),
                     thumbnail: $(el).find('img').attr('src') || ''
                 });
             }
         });
 
-        // BIAR GAK CRASH: Limit data kalau type=all (ambil 100 pertama aja)
-        const finalData = type === 'all' ? results.slice(0, 100) : results;
-
         return res.status(200).json({ 
             status: 'success', 
-            total: finalData.length, 
-            data: finalData 
+            total: results.length, 
+            page: p,
+            data: results 
         });
 
     } catch (err) {
-        return res.status(200).json({ status: 'error', message: "Database kegedean, babi! Vercel gak kuat.", debug: targetUrl });
+        return res.status(200).json({ 
+            status: 'error', 
+            message: "Server Anoboy lemot, Vercel gak sabaran babi!",
+            debug: targetUrl 
+        });
     }
 };
