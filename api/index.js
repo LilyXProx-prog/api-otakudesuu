@@ -8,98 +8,75 @@ module.exports = async (req, res) => {
     if (req.method === 'OPTIONS') return res.status(200).end();
 
     const { q, endpoint, category, page } = req.query;
-    // Update domain ini kalau mereka pindah (Check samehadaku.care / samehadaku.email)
+    // COBA DOMAIN BARU: Samehadaku sering ganti ke .email atau .care
     const BASE_URL = 'https://samehadaku.email'; 
-    const headers = { 
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-        'Referer': BASE_URL
+
+    const config = {
+        timeout: 5000, // Kecilin timeout biar gak bikin Vercel crash
+        headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+            'Referer': 'https://samehadaku.email/',
+            'Connection': 'keep-alive'
+        }
     };
 
     try {
         let url = `${BASE_URL}/`;
-
-        // 1. JALUR STREAMING (EPISODE)
-        if (endpoint && endpoint.includes('-episode-')) {
-            url = `${BASE_URL}/${endpoint.replace(/^\//, '')}/`;
-            const { data } = await axios.get(url, { headers, timeout: 8000 });
-            const $ = cheerio.load(data);
-            
-            return res.status(200).json({
-                status: 'success',
-                type: 'streaming',
-                data: {
-                    title: $('.entry-title').text().trim(),
-                    player: $('.player-embed iframe').attr('src') || $('#pembed iframe').attr('src') || '',
-                    prev: $('.nvs.prev a').attr('href')?.replace(BASE_URL, '').replace(/\//g, '') || '',
-                    next: $('.nvs.next a').attr('href')?.replace(BASE_URL, '').replace(/\//g, '') || ''
-                }
-            });
-        }
-
-        // 2. JALUR DETAIL ANIME (DAFTAR EPISODE LENGKAP)
         if (endpoint) {
-            url = `${BASE_URL}/anime/${endpoint.replace(/^\/|anime\//, '')}/`;
-            const { data } = await axios.get(url, { headers, timeout: 8000 });
-            const $ = cheerio.load(data);
-            
-            const episodes = [];
-            $('.lstepsiode ul li').each((i, el) => {
-                const a = $(el).find('a');
-                episodes.push({
-                    title: a.text().trim(),
-                    date: $(el).find('.resoci').text().trim(),
-                    endpoint: a.attr('href').replace(BASE_URL, '').replace(/\//g, '')
-                });
-            });
-
-            return res.status(200).json({
-                status: 'success',
-                type: 'anime_detail',
-                data: {
-                    title: $('.entry-title').text().trim(),
-                    thumbnail: $('.thumb img').attr('src'),
-                    score: $('.rating strong').text().replace('Rating ', '').trim(),
-                    sinopsis: $('.entry-content p').first().text().trim(),
-                    episodes: episodes
-                }
-            });
+            url = endpoint.includes('episode') ? `${BASE_URL}/${endpoint}/` : `${BASE_URL}/anime/${endpoint}/`;
+        } else if (category === 'ongoing') {
+            url = `${BASE_URL}/anime-ongoing/`;
+        } else if (q) {
+            url = `${BASE_URL}/?s=${encodeURIComponent(q)}`;
         }
-
-        // 3. JALUR LISTING (ONGOING, COMPLETE, SEARCH)
-        if (q) url = `${BASE_URL}/?s=${encodeURIComponent(q)}`;
-        else if (category === 'ongoing') url = `${BASE_URL}/anime-ongoing/`;
-        else if (category === 'complete') url = `${BASE_URL}/anime-completed/`;
-        else url = `${BASE_URL}/daftar-anime-2/`; // Default: List All
 
         const p = parseInt(page) || 1;
-        if (p > 1) url += (url.includes('?') ? '&' : '') + `page/${p}/`;
+        if (p > 1) url += `page/${p}/`;
 
-        const { data } = await axios.get(url, { headers, timeout: 10000 });
-        const $ = cheerio.load(data);
+        const response = await axios.get(url, config);
+        const $ = cheerio.load(response.data);
         const results = [];
 
-        $('.animpost').each((i, el) => {
-            const a = $(el).find('a').first();
-            const img = $(el).find('img').first();
-            const href = a.attr('href') || '';
-            
-            results.push({
-                title: $(el).find('.title').text().trim(),
-                endpoint: href.replace(BASE_URL, '').replace(/\//g, '').replace('anime', ''),
-                thumbnail: img.attr('src'),
-                score: $(el).find('.score').text().trim(),
-                type: $(el).find('.type').text().trim()
+        // JALUR LISTING (ONGOING/HOME/SEARCH)
+        if (!endpoint) {
+            $('.animpost').each((i, el) => {
+                const a = $(el).find('a').first();
+                const img = $(el).find('img').first();
+                const href = a.attr('href') || '';
+                
+                // Safety check biar gak crash pas split
+                const ep = href.includes('/anime/') ? href.split('/anime/')[1]?.replace(/\//g, '') : href.split('.email/')[1]?.replace(/\//g, '');
+
+                if (ep) {
+                    results.push({
+                        title: $(el).find('.title, h2').first().text().trim(),
+                        endpoint: ep,
+                        thumbnail: img.attr('src') || img.attr('data-src'),
+                        score: $(el).find('.score').text().trim() || '0'
+                    });
+                }
             });
+            return res.status(200).json({ status: 'success', total: results.length, data: results });
+        }
+
+        // JALUR DETAIL (DAPET PLAYER)
+        return res.status(200).json({
+            status: 'success',
+            data: {
+                title: $('.entry-title').first().text().trim(),
+                player: $('.player-embed iframe').attr('src') || $('#pembed iframe').attr('src') || '',
+            }
         });
 
-        return res.status(200).json({ status: 'success', total: results.length, data: results });
-
     } catch (err) {
+        // PREVENT 500: Selalu balikin JSON meskipun error
         return res.status(200).json({ 
             status: 'error', 
-            message: "Samehadaku lagi rapat babi!", 
+            message: "Samehadaku lagi ketat babi!", 
             log: err.message,
-            tried: url
+            tried_url: url 
         });
     }
 };
