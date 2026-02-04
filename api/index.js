@@ -10,32 +10,42 @@ module.exports = async (req, res) => {
     };
 
     try {
-        // 1. JALUR DETAIL EPISODE (Jika ada parameter endpoint)
         if (endpoint) {
             const targetUrl = `${BASE_URL}${endpoint}/`;
             const { data } = await axios.get(targetUrl, { headers, timeout: 15000 });
             const $ = cheerio.load(data);
             const downloadLinks = [];
 
-            // Selector super luas khusus halaman nonton
-            $('.v_links a, .download a, #isi-video a, .entry-content a').each((i, el) => {
+            // TEKNIK BRUTAL: Sikat semua tag <a> di seluruh halaman
+            $('a').each((i, el) => {
                 const url = $(el).attr('href');
-                const text = $(el).text().trim();
-                if (url && (url.includes('http') || url.includes('drive') || url.includes('mega')) && !url.includes('anoboy.si')) {
-                    downloadLinks.push({ server: text || `Link ${i+1}`, url: url });
+                const text = $(el).text().trim().toLowerCase();
+                
+                if (url && (url.includes('http')) && !url.includes('anoboy.si')) {
+                    // Filter: Cari kata kunci download atau nama server populer
+                    const isDownload = /download|mirror|drive|mega|zippyshare|mediafire|720p|480p|360p/.test(text) || 
+                                     /gdrive|mp4upload|odrive/.test(url.toLowerCase());
+                    
+                    if (isDownload) {
+                        downloadLinks.push({ 
+                            server: $(el).text().trim() || `Link ${i}`, 
+                            url: url 
+                        });
+                    }
                 }
             });
 
             if (downloadLinks.length > 0) {
                 return res.status(200).json({ status: 'success', type: 'download_links', endpoint, data: downloadLinks });
             } else {
-                return res.status(200).json({ status: 'fail', message: 'Gak nemu link download di halaman ini, babi!', url: targetUrl });
+                // Kalo masih gagal, balikin HTML mentahnya (buat kita debug manual, babi!)
+                return res.status(200).json({ status: 'fail', message: 'Masih zonk, babi! Cek manual!', url: targetUrl });
             }
         }
 
-        // 2. JALUR SEARCH & HOME (Jika gak ada endpoint)
+        // Jalur List Episode (Udah Berhasil)
         let targetUrl = q ? `${BASE_URL}?s=${encodeURIComponent(q)}` : BASE_URL;
-        const { data } = await axios.get(targetUrl, { headers, timeout: 15000 });
+        const { data } = await axios.get(targetUrl, { headers });
         const $ = cheerio.load(data);
         const results = [];
 
@@ -44,7 +54,7 @@ module.exports = async (req, res) => {
             const link = $(el).find('a').attr('href');
             if (link) {
                 const ep = link.replace(BASE_URL, '').replace(/\//g, '');
-                if (title && ep && !ep.startsWith('series') && !ep.startsWith('category')) {
+                if (title && ep && !ep.startsWith('series')) {
                     results.push({ title, endpoint: ep });
                 }
             }
@@ -53,6 +63,6 @@ module.exports = async (req, res) => {
         res.status(200).json({ status: 'success', total: results.length, data: results });
 
     } catch (err) {
-        res.status(500).json({ status: 'error', message: "Anoboy emang rewel!", detail: err.message });
+        res.status(500).json({ status: 'error', message: err.message });
     }
 };
