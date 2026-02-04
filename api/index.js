@@ -8,72 +8,59 @@ module.exports = async (req, res) => {
     if (req.method === 'OPTIONS') return res.status(200).end();
 
     const { q, endpoint, category, page } = req.query;
-    const BASE_URL = 'https://anoboy.si';
+    const BASE_URL = 'https://zorotv.com.ua';
     const headers = { 
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-        'Referer': 'https://anoboy.si/' 
+        'Referer': BASE_URL 
     };
 
     try {
-        let targetUrl = `${BASE_URL}/`;
+        let url = `${BASE_URL}/`;
 
+        // 1. DETAIL ANIME (EPISODE LIST)
         if (endpoint) {
-            targetUrl = `${BASE_URL}/${endpoint.replace(/^\//, '')}/`;
-        } else if (category) {
-            // MAPPING SESUAI TEMUAN LU, BABI!
-            const catMap = { 
-                'ongoing': 'category/anime-ongoing', 
-                'complete': 'category/anime-tamat', 
-                'upcoming': 'category/upcoming' // Jalur upcoming rill
-            };
-            targetUrl = `${BASE_URL}/${catMap[category] || category}/`;
-        } else if (q) {
-            targetUrl = `${BASE_URL}/?s=${encodeURIComponent(q)}`;
-        }
-
-        const p = parseInt(page) || 1;
-        if (p > 1) {
-            targetUrl += (targetUrl.includes('?') ? '&' : '') + `paged=${p}`;
-            if (!targetUrl.includes('?')) targetUrl = targetUrl.replace(/\/$/, '') + `/page/${p}/`;
-        }
-
-        const response = await axios.get(targetUrl, { headers, timeout: 8000 });
-        const $ = cheerio.load(response.data);
-        const results = [];
-
-        // KALO DETAIL
-        if (endpoint) {
+            url = `${BASE_URL}/watch/${endpoint.replace(/^\/|watch\//, '')}`;
+            const { data } = await axios.get(url, { headers });
+            const $ = cheerio.load(data);
+            
             return res.status(200).json({
                 status: 'success',
                 data: {
-                    title: $('.entry-title').first().text().trim(),
-                    player: $('iframe').first().attr('src') || '',
-                    sinopsis: $('.contentp').first().text().trim(),
-                    full_episodes: [] // Scrape di sini kalo mau list eps
+                    title: $('.anime-name').text().trim(),
+                    description: $('.text-justify').text().trim(),
+                    thumbnail: $('.film-poster-img').attr('src'),
+                    // Zoro pake ID buat list eps, ini basic metadata-nya
+                    id: endpoint.split('-').pop()
                 }
             });
         }
 
-        // KALO LIST
-        $('.amv, article, .item').each((i, el) => {
-            const a = $(el).find('a').first();
-            const href = a.attr('href');
-            if (href && href.includes(BASE_URL)) {
-                results.push({
-                    title: a.attr('title') || $(el).find('h3').text().trim(),
-                    endpoint: href.replace(BASE_URL, '').replace(/\//g, ''),
-                    thumbnail: $(el).find('img').attr('src') || ''
-                });
-            }
+        // 2. NAVIGASI JALUR (HOME / SEARCH / RECENT)
+        if (q) url = `${BASE_URL}/search?keyword=${encodeURIComponent(q)}`;
+        else if (category === 'ongoing') url = `${BASE_URL}/recently-updated`;
+        else if (category === 'movie') url = `${BASE_URL}/movie`;
+
+        if (page && page > 1) url += (q ? `&page=${page}` : `?page=${page}`);
+
+        const { data } = await axios.get(url, { headers });
+        const $ = cheerio.load(data);
+        const results = [];
+
+        $('.flw-item').each((i, el) => {
+            const a = $(el).find('.film-name a');
+            const href = a.attr('href') || '';
+            results.push({
+                title: a.text().trim(),
+                endpoint: href.replace(/^\/watch\//, ''),
+                thumbnail: $(el).find('img').attr('data-src') || $(el).find('img').attr('src'),
+                quality: $(el).find('.tick-quality').text().trim(),
+                episodes: $(el).find('.tick-sub').text().trim() || $(el).find('.tick-eps').text().trim()
+            });
         });
 
         return res.status(200).json({ status: 'success', total: results.length, data: results });
 
     } catch (err) {
-        return res.status(200).json({ 
-            status: 'error', 
-            message: "Gagal narik " + category, 
-            debug_url: targetUrl 
-        });
+        return res.status(200).json({ status: 'error', message: err.message, tried_url: url });
     }
 };
