@@ -8,7 +8,8 @@ module.exports = async (req, res) => {
     if (req.method === 'OPTIONS') return res.status(200).end();
 
     const { q, endpoint, category, page } = req.query;
-    const BASE_URL = 'https://kuronime.my'; 
+    // Update domain ini kalau mereka pindah (Check samehadaku.care / samehadaku.email)
+    const BASE_URL = 'https://samehadaku.email'; 
     const headers = { 
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
         'Referer': BASE_URL
@@ -17,8 +18,8 @@ module.exports = async (req, res) => {
     try {
         let url = `${BASE_URL}/`;
 
-        // 1. JALUR NONTON (EPISODE)
-        if (endpoint && endpoint.includes('episode')) {
+        // 1. JALUR STREAMING (EPISODE)
+        if (endpoint && endpoint.includes('-episode-')) {
             url = `${BASE_URL}/${endpoint.replace(/^\//, '')}/`;
             const { data } = await axios.get(url, { headers, timeout: 8000 });
             const $ = cheerio.load(data);
@@ -28,24 +29,25 @@ module.exports = async (req, res) => {
                 type: 'streaming',
                 data: {
                     title: $('.entry-title').text().trim(),
-                    player: $('#pembed iframe').attr('src') || $('.player-embed iframe').attr('src') || '',
-                    next: $('.nextprev a[rel="next"]').attr('href')?.replace(BASE_URL, '') || '',
-                    prev: $('.nextprev a[rel="prev"]').attr('href')?.replace(BASE_URL, '') || ''
+                    player: $('.player-embed iframe').attr('src') || $('#pembed iframe').attr('src') || '',
+                    prev: $('.nvs.prev a').attr('href')?.replace(BASE_URL, '').replace(/\//g, '') || '',
+                    next: $('.nvs.next a').attr('href')?.replace(BASE_URL, '').replace(/\//g, '') || ''
                 }
             });
         }
 
-        // 2. JALUR DETAIL ANIME (DAFTAR EPISODE)
+        // 2. JALUR DETAIL ANIME (DAFTAR EPISODE LENGKAP)
         if (endpoint) {
             url = `${BASE_URL}/anime/${endpoint.replace(/^\/|anime\//, '')}/`;
             const { data } = await axios.get(url, { headers, timeout: 8000 });
             const $ = cheerio.load(data);
             
             const episodes = [];
-            $('.eplister ul li').each((i, el) => {
+            $('.lstepsiode ul li').each((i, el) => {
                 const a = $(el).find('a');
                 episodes.push({
-                    title: $(el).find('.epl-num').text() + ' - ' + $(el).find('.epl-title').text(),
+                    title: a.text().trim(),
+                    date: $(el).find('.resoci').text().trim(),
                     endpoint: a.attr('href').replace(BASE_URL, '').replace(/\//g, '')
                 });
             });
@@ -56,39 +58,38 @@ module.exports = async (req, res) => {
                 data: {
                     title: $('.entry-title').text().trim(),
                     thumbnail: $('.thumb img').attr('src'),
-                    sinopsis: $('.entry-content p').text().trim() || $('.sinopsis p').text().trim(),
+                    score: $('.rating strong').text().replace('Rating ', '').trim(),
+                    sinopsis: $('.entry-content p').first().text().trim(),
                     episodes: episodes
                 }
             });
         }
 
-        // 3. JALUR LISTING (ONGOING, SEARCH, TERBARU)
+        // 3. JALUR LISTING (ONGOING, COMPLETE, SEARCH)
         if (q) url = `${BASE_URL}/?s=${encodeURIComponent(q)}`;
-        else if (category === 'ongoing') url = `${BASE_URL}/anime/?status=ongoing&order=update`;
-        else if (category === 'tamat') url = `${BASE_URL}/anime/?status=completed&order=update`;
-        else url = `${BASE_URL}/anime/?order=update`;
+        else if (category === 'ongoing') url = `${BASE_URL}/anime-ongoing/`;
+        else if (category === 'complete') url = `${BASE_URL}/anime-completed/`;
+        else url = `${BASE_URL}/daftar-anime-2/`; // Default: List All
 
-        if (page && page > 1) url += (url.includes('?') ? '&' : '?') + `page=${page}`;
+        const p = parseInt(page) || 1;
+        if (p > 1) url += (url.includes('?') ? '&' : '') + `page/${p}/`;
 
         const { data } = await axios.get(url, { headers, timeout: 10000 });
         const $ = cheerio.load(data);
         const results = [];
 
-        // Selector Kuronime: .listupd .bs atau article
-        $('.listupd .bs, .listupd article').each((i, el) => {
+        $('.animpost').each((i, el) => {
             const a = $(el).find('a').first();
             const img = $(el).find('img').first();
-            const title = $(el).find('.tt, h2, h3').text().trim() || a.attr('title');
             const href = a.attr('href') || '';
-
-            if (href && title) {
-                results.push({
-                    title: title,
-                    endpoint: href.replace(BASE_URL, '').replace(/\//g, '').replace('anime', ''),
-                    thumbnail: img.attr('data-src') || img.attr('src'),
-                    meta: $(el).find('.epx, .bt .ep').text().trim()
-                });
-            }
+            
+            results.push({
+                title: $(el).find('.title').text().trim(),
+                endpoint: href.replace(BASE_URL, '').replace(/\//g, '').replace('anime', ''),
+                thumbnail: img.attr('src'),
+                score: $(el).find('.score').text().trim(),
+                type: $(el).find('.type').text().trim()
+            });
         });
 
         return res.status(200).json({ status: 'success', total: results.length, data: results });
@@ -96,8 +97,9 @@ module.exports = async (req, res) => {
     } catch (err) {
         return res.status(200).json({ 
             status: 'error', 
-            message: "Kuronime lagi maintenance babi!", 
-            log: err.message 
+            message: "Samehadaku lagi rapat babi!", 
+            log: err.message,
+            tried: url
         });
     }
 };
