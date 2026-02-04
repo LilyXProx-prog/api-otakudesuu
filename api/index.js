@@ -17,15 +17,15 @@ module.exports = async (req, res) => {
     try {
         let targetUrl = `${BASE_URL}/`;
 
-        // 1. JURUS SIKAT SEMUA (ANIME LIST A-Z)
+        // 1. JALUR DATABASE LENGKAP (A-Z)
         if (type === 'all') {
-            targetUrl = `${BASE_URL}/anime-list/`; // Jalur gudang utama
+            targetUrl = `${BASE_URL}/anime-list/`;
         } 
-        // 2. DETAIL & DOWNLOAD
+        // 2. JALUR DETAIL
         else if (endpoint) {
             targetUrl = `${BASE_URL}/${endpoint.replace(/^\//, '')}/`;
         } 
-        // 3. KATEGORI & SEARCH
+        // 3. JALUR BIASA
         else if (category) {
             const catMap = { 'ongoing': 'anime-ongoing', 'tamat': 'anime-tamat', 'movie': 'movie-anime' };
             targetUrl = `${BASE_URL}/${catMap[category] || category}/`;
@@ -33,16 +33,17 @@ module.exports = async (req, res) => {
             targetUrl = `${BASE_URL}/?s=${encodeURIComponent(q)}`;
         }
 
-        // Pagination
+        // Pagination Safe
         if (page && page > 1) {
             targetUrl += (targetUrl.includes('?') ? '&' : '') + `paged=${page}`;
             if (!targetUrl.includes('?')) targetUrl = targetUrl.replace(/\/$/, '') + `/page/${page}/`;
         }
 
-        const { data } = await axios.get(targetUrl, { headers, timeout: 15000 });
-        const $ = cheerio.load(data);
+        const response = await axios.get(targetUrl, { headers, timeout: 10000 });
+        const $ = cheerio.load(response.data);
+        const results = [];
 
-        // RESPONS DETAIL
+        // RESPONS DETAIL (PLAYER + EPS)
         if (endpoint) {
             const episodes = [];
             $('.host-link a, .video-nav a, .list-eps a').each((i, el) => {
@@ -58,21 +59,19 @@ module.exports = async (req, res) => {
             return res.status(200).json({
                 status: 'success',
                 data: {
-                    title: $('.entry-title').text().trim(),
-                    player: $('iframe').first().attr('src'),
-                    sinopsis: $('.contentp').text().trim() || $('.entry-content p').text().trim(),
+                    title: $('.entry-title').first().text().trim(),
+                    player: $('iframe').first().attr('src') || '',
+                    sinopsis: $('.contentp').first().text().trim() || 'No Synopsis',
                     full_episodes: episodes,
-                    downloads: [] 
+                    downloads: []
                 }
             });
         }
 
-        // RESPONS LIST (Sikat Database)
-        const results = [];
-        // Selector khusus buat Anime List (biasanya beda strukturnya)
-        const selector = type === 'all' ? '.isi_anime a, .entry-content a, .amv' : '.amv, article, .item';
+        // RESPONS LIST (PAKE SELECTOR YANG LEBIH RINGAN)
+        const items = type === 'all' ? $('.isi_anime a, .entry-content a') : $('.amv, article');
         
-        $(selector).each((i, el) => {
+        items.each((i, el) => {
             const a = $(el).is('a') ? $(el) : $(el).find('a').first();
             const title = a.attr('title') || a.text().trim();
             const link = a.attr('href');
@@ -86,14 +85,16 @@ module.exports = async (req, res) => {
             }
         });
 
-        res.status(200).json({ 
+        // BIAR GAK CRASH: Limit data kalau type=all (ambil 100 pertama aja)
+        const finalData = type === 'all' ? results.slice(0, 100) : results;
+
+        return res.status(200).json({ 
             status: 'success', 
-            total: results.length, 
-            type: type || 'latest',
-            data: results 
+            total: finalData.length, 
+            data: finalData 
         });
 
     } catch (err) {
-        res.status(200).json({ status: 'error', message: "Database lagi dikunci, babi!", debug: targetUrl });
+        return res.status(200).json({ status: 'error', message: "Database kegedean, babi! Vercel gak kuat.", debug: targetUrl });
     }
 };
